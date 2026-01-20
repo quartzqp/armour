@@ -1,0 +1,115 @@
+    ['body_armour'] = {
+        label = 'Body Armour',
+        weight = 1000,
+        stack = false,
+        close = true,
+        consume = false,
+        description = 'A Body Armour required to use armour plates.',
+        client = {
+            image = 'body_armour.png',
+            remove = function(slot)
+                TriggerEvent('armour:forceStripArmour')
+            end
+        },
+        buttons = {
+            {
+                label = 'Pull Plate',
+                action = function(slot)
+                    TriggerEvent('armour:checkAndSendArmourLevel', slot)
+                end
+            }
+        }
+    },
+
+    ['heavy_body_armour'] = {
+        label = 'Heavy Body Armour',
+        weight = 1000,
+        stack = false,
+        close = true,
+        consume = false,
+        description = 'A Heavy Body Armour required to use armour plates.',
+        client = {
+            image = 'heavy_body_armour.png',
+            remove = function(slot)
+                TriggerEvent('armour:forceStripArmour')
+            end
+        },
+        buttons = {
+            {
+                label = 'Pull Plate',
+                action = function(slot)
+                    TriggerEvent('armour:checkAndSendArmourLevel', slot)
+                end
+            }
+        }
+    },
+
+    ['improved_body_armour'] = {
+        label = 'Improved Body Armour',
+        weight = 1000,
+        stack = false,
+        close = true,
+        consume = false,
+        description = 'A Improved Body Armour required to use armour plates.',
+        client = {
+            image = 'improved_body_armour.png',
+            remove = function(slot)
+                TriggerEvent('armour:forceStripArmour')
+            end
+        },
+        buttons = {
+            {
+                label = 'Pull Plate',
+                action = function(slot)
+                    TriggerEvent('armour:checkAndSendArmourLevel', slot)
+                end
+            }
+        }
+    },
+
+    ['pd_body_armour'] = {
+        label = 'PD Body Armour',
+        weight = 1000,
+        stack = false,
+        close = true,
+        consume = false,
+        description = 'A PD Body Armour required to use armour plates.',
+        client = {
+            image = 'pd_body_armour.png',
+            remove = function(slot)
+                TriggerEvent('armour:forceStripArmour')
+            end
+        },
+        buttons = {
+            {
+                label = 'Pull Plate',
+                action = function(slot)
+                    TriggerEvent('armour:checkAndSendArmourLevel', slot)
+                end
+            }
+        }
+    },
+
+    ['armour_plate'] = {
+        label = 'Armour Plate',
+        weight = 1000,
+        stack = true,
+        close = true,
+        consume = 0,
+        description = 'A Steel protective plate that absorbs damage.',
+        client = {
+            export = 'armour.armour_plate',
+        }
+    },
+
+    ['improved_armour_plate'] = {
+        label = 'Improved Armour Plate',
+        weight = 1000,
+        stack = true,
+        close = true,
+        consume = 0,
+        description = 'A Improved Steel protective plate that absorbs damage.',
+        client = {
+            export = 'armour.armour_plate',
+        }
+    },
