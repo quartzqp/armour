@@ -1,18 +1,37 @@
 Config = {}
 
--- Interval (in seconds) to check if the player is still wearing the rig.
--- Keep >0 for safety. Even at 0.0ms UI you still want some validation.
-Config.CheckArmourSeconds = 0
-
 Config.Debug = false
+Config.CheckArmourSeconds = 0
+Config.ArmourBleedThrough = 1.0
 
--- RIG SETTINGS
-Config.RefillCapacity = 30
-Config.PlateSlotLimit = 5
-Config.ArmorPerPlate = 20
+Config.BodyArmours = {
+    body_armour = {
+        maxPlates = 5,
+        maxRefills = 15,
+    },
 
--- REALISM SETTINGS
-Config.ArmourBleedThrough = 0.20
+    heavy_body_armour = {
+        maxPlates = 5,
+        maxRefills = 30,
+    },
+
+    improved_body_armour = {
+        maxPlates = 10,
+        maxRefills = 60,
+    },
+
+    pd_body_armour = {
+        maxPlates = 5,
+        maxRefills = 30,
+        job = "police",
+    }
+}
+
+Config.ArmourPlates = {
+    armour_plate = 20,
+    improved_armour_plate = 25,
+    broken_armour_plate = 0,
+}
 
 Config.Locales = {
     ['en'] = {
@@ -20,13 +39,17 @@ Config.Locales = {
         ['label_plates']            = 'Plates',
         ['label_refills']           = 'Refills',
 
-        ['armour_removed']          = 'Armour Removed.',
-        ['inventory_full']          = 'Inventory Full.',
-        ['plate_carrier_full']      = 'This Plate Carrier is Full.',
-        ['plate_carrier_worn']      = 'This Plate Carrier is Worn Out.',
-        ['plate_carrier_required']  = 'You Must Have a Plate Carrier.',
-        ['plate_applied']           = 'Armour Plate Applied.',
-        ['plate_unequip']           = 'Armour Plate Pulled.',
-        ['plate_validation']        = 'ERROR: Armour Plate Validation Failed.',
-    },
+        ['body_armour_applied']     = 'Body Armour Equipped.',
+        ['body_armour_removed']     = 'Body Armour Removed.',
+        ['body_armour_required']    = 'You Must Have a Body Armour.',
+        ['body_armour_full']        = 'This Body Armour is Full.',
+        ['body_armour_worn']        = 'This Body Armour is Worn.',
+        ['body_armour_no_plates']   = 'No Plates Available in this Armour.',
+
+        ['armour_plate_applied']    = 'Armour Plate Applied.',
+        ['armour_plate_pulled']     = 'Armour Plate Pulled.',
+        ['armour_plate_apply']      = 'Applying Armour Plate',
+        ['armour_plate_pull']       = 'Pulling Armour Plate',
+        ['armour_plate_validation'] = 'ERROR: Armour Plate Validation Failed.',
+    }
 }

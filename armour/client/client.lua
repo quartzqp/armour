@@ -1,292 +1,268 @@
-local armourMonitorRunning = false
-local lastArmourPlate = { label = nil, image = nil }
+local inventory = exports.ox_inventory
 
--- LOCAL CACHE
-local storedPlates = 0
-local storedRefills = 0
-local activeRigSlot = nil
-local activeRigMeta = nil
+-- ============================================================
+-- LOCALE
+-- ============================================================
+local function L(key)
+    local loc = Config.Locales and Config.Locales['en']
+    return (loc and loc[key]) or key
+end
 
--- DAMAGE TRACKING CACHE
+-- ============================================================
+-- STATE
+-- ============================================================
+local currentArmour = {
+    name = nil,
+    slot = nil,
+    metadata = nil,
+}
+
 local prevArmour = 0
 
--- PERF / THROTTLE
-local LOOP_WAIT_MS = 350              -- higher wait = lower CPU
-local RESCAN_INTERVAL_MS = 2000       -- inventory rescan interval (expensive call)
-local lastRescanAt = 0
-
--- NET THROTTLE / DEDUPE
-local lastSent = {
-    slot = nil, label = nil, image = nil,
-    armour = nil, plates = nil, refills = nil
-}
-local lastSendAt = 0
-local SEND_MIN_INTERVAL_MS = 500
-
-local function T(key)
-    return Config.Locales["en"][key] or key
+-- ============================================================
+-- HELPERS
+-- ============================================================
+local function getArmourConfig(itemName)
+    return Config.BodyArmours[itemName]
 end
 
-local function DebugPrint(data)
-    if Config.Debug then
-        print('^3[ARMOUR DEBUG]^7 ' .. tostring(data))
-    end
+local function ensurePlateArray(meta)
+    meta.plates = meta.plates or {}
+    return meta.plates
 end
 
--- EXPENSIVE: avoid using frequently
-local function findArmourRig()
-    local items = exports.ox_inventory:Search('slots', 'body_armour')
-    if items then
-        for _, item in pairs(items) do
-            return item
+local function calculateTotalArmour(meta)
+    local plates = ensurePlateArray(meta)
+    local total = 0
+    for _, plate in ipairs(plates) do
+        if plate.durability and plate.durability > 0 then
+            total = total + plate.durability
         end
     end
-    return nil
+    if total > 100 then total = 100 end
+    return total
 end
 
-local function syncLocalStateFromRigItem(rigItem)
-    if rigItem and rigItem.metadata then
-        activeRigSlot = rigItem.slot
-        activeRigMeta = rigItem.metadata
-
-        storedPlates = rigItem.metadata.plates or 0
-        storedRefills = rigItem.metadata.refills or 0
-        lastArmourPlate.label = rigItem.metadata.lastPlateLabel or nil
-        lastArmourPlate.image = rigItem.metadata.lastPlateImage or nil
-    else
-        activeRigSlot = nil
-        activeRigMeta = nil
-        storedPlates = 0
-        storedRefills = 0
-        lastArmourPlate.label = nil
-        lastArmourPlate.image = nil
-    end
+local function getTopPlate(meta)
+    local plates = ensurePlateArray(meta)
+    return plates[#plates], #plates
 end
 
-local function clampCounts()
-    if storedPlates < 0 then storedPlates = 0 end
-    if storedPlates > Config.PlateSlotLimit then storedPlates = Config.PlateSlotLimit end
-    if storedRefills < 0 then storedRefills = 0 end
-    if storedRefills > Config.RefillCapacity then storedRefills = Config.RefillCapacity end
-end
-
-local function rescanRigIfNeeded(force)
-    local now = GetGameTimer()
-    if not force and (now - lastRescanAt) < RESCAN_INTERVAL_MS then
-        return
-    end
-    lastRescanAt = now
-
-    local rig = findArmourRig()
-    if rig then
-        if activeRigSlot == nil or rig.slot ~= activeRigSlot then
-            DebugPrint(("Rig rescan update. slot: %s -> %s"):format(tostring(activeRigSlot), tostring(rig.slot)))
-            syncLocalStateFromRigItem(rig)
-
-            local saved = (rig.metadata and rig.metadata.savedArmour) or 0
-            SetPedArmour(cache.ped, saved)
-            prevArmour = saved
+local function buildArmourDescription(meta, itemName)
+    local plates = ensurePlateArray(meta)
+    local nonBroken = 0
+    for _, plate in ipairs(plates) do
+        if plate.durability and plate.durability > 0 then
+            nonBroken = nonBroken + 1
         end
-    else
-        if activeRigSlot ~= nil then
-            DebugPrint("Rig lost on rescan; stripping armour.")
-            SetPedArmour(cache.ped, 0)
+    end
+
+    local cfg = getArmourConfig(itemName) or {}
+    local maxPlates = cfg.maxPlates or 5
+    local refills = meta.refills or 0
+    local maxRefills = cfg.maxRefills or 0
+    local armour = meta.armour or 0
+
+    return string.format(
+        "%s: %d%%\n%s: %d/%d\n%s: %d/%d",
+        L('label_armour'),
+        armour,
+        L('label_plates'),
+        nonBroken, maxPlates,
+        L('label_refills'),
+        refills, maxRefills
+    )
+end
+
+local function syncArmourToPed(meta)
+    local armour = calculateTotalArmour(meta)
+    SetPedArmour(cache.ped, armour)
+    prevArmour = armour
+    meta.armour = armour
+end
+
+local function EnsureCurrentArmour()
+    if currentArmour.name and currentArmour.metadata then
+        return true
+    end
+
+    for name, _ in pairs(Config.BodyArmours) do
+        local slots = inventory:Search('slots', name)
+        if slots and slots[1] then
+            local item = slots[1]
+            SetCurrentArmour(item.name, item.slot, item.metadata or {})
+            return true
         end
-        syncLocalStateFromRigItem(nil)
     end
+
+    return false
 end
 
-local function sendRigMetadataIfChanged(armourValue)
-    if not activeRigSlot then return end
+-- ============================================================
+-- BODY ARMOUR CORE
+-- ============================================================
+function SetCurrentArmour(itemName, slot, metadata)
+    local cfg = getArmourConfig(itemName)
+    if not cfg then return end
 
-    local now = GetGameTimer()
-    if (now - lastSendAt) < SEND_MIN_INTERVAL_MS then
-        return
-    end
+    currentArmour.name = itemName
+    currentArmour.slot = slot
+    currentArmour.metadata = metadata or {}
 
-    local slot = activeRigSlot
-    local label = lastArmourPlate.label
-    local image = lastArmourPlate.image
-    local plates = storedPlates
-    local refills = storedRefills
-    local armour = armourValue
+    local meta = currentArmour.metadata
+    ensurePlateArray(meta)
+    meta.refills = meta.refills or 0
 
-    if lastSent.slot == slot and lastSent.label == label and lastSent.image == image
-        and lastSent.armour == armour and lastSent.plates == plates and lastSent.refills == refills then
-        return
-    end
+    syncArmourToPed(meta)
+    meta.description = buildArmourDescription(meta, itemName)
 
-    lastSendAt = now
-    lastSent.slot = slot
-    lastSent.label = label
-    lastSent.image = image
-    lastSent.armour = armour
-    lastSent.plates = plates
-    lastSent.refills = refills
-
-    TriggerServerEvent('armour:updateRigMetadata', slot, label, image, armour, plates, refills)
+    lib.notify({ type = 'success', description = L('body_armour_applied') })
 end
+exports('SetCurrentArmour', SetCurrentArmour)
 
-local function updateRig(changePlates, changeRefills)
-    if not activeRigSlot then
-        rescanRigIfNeeded(true)
-        if not activeRigSlot then return end
-    end
+RegisterNetEvent('armour:clientForceStrip', function()
+    if not currentArmour.metadata then return end
 
-    if changePlates then storedPlates = storedPlates + changePlates end
-    if changeRefills then storedRefills = storedRefills + changeRefills end
-    clampCounts()
+    currentArmour.name = nil
+    currentArmour.slot = nil
+    currentArmour.metadata = nil
+    SetPedArmour(cache.ped, 0)
+    prevArmour = 0
 
-    sendRigMetadataIfChanged(GetPedArmour(cache.ped))
-end
+    lib.notify({ type = 'info', description = L('body_armour_removed') })
+end)
 
-local function nilRig()
-    if not activeRigSlot then
-        rescanRigIfNeeded(true)
-    end
-    if activeRigSlot then
-        TriggerServerEvent('armour:nilRigMetadata', activeRigSlot)
-    end
-    storedPlates = 0
-end
-
--- -------------------------------------------------------------------------- --
---                           REALISM & MONITORING                             --
--- -------------------------------------------------------------------------- --
-
-local function hasCompatibleRig()
-    return activeRigSlot ~= nil
-end
-
-local function DamageLoop()
-    prevArmour = GetPedArmour(cache.ped)
-    local checkTimer = 0
-
-    while armourMonitorRunning do
-        Wait(LOOP_WAIT_MS)
-
-        rescanRigIfNeeded(false)
-
-        if not activeRigSlot then
-            SetPedArmour(cache.ped, 0)
-            armourMonitorRunning = false
-            lib.notify({ type = 'error', description = T('armour_removed') })
+RegisterNetEvent('armour:clientBodyArmourAcquired', function()
+    for name, _ in pairs(Config.BodyArmours) do
+        local slots = inventory:Search('slots', name)
+        if slots and slots[1] then
+            local item = slots[1]
+            SetCurrentArmour(item.name, item.slot, item.metadata or {})
             break
         end
+    end
+end)
 
-        local currentArmour = GetPedArmour(cache.ped)
+-- Watchdog: if the armour item disappears, clear state
+CreateThread(function()
+    while true do
+        Wait(1000)
 
-        checkTimer = checkTimer + LOOP_WAIT_MS
-        if checkTimer >= (Config.CheckArmourSeconds * 1000) then
-            checkTimer = 0
-            if not hasCompatibleRig() and currentArmour > 0 then
+        if currentArmour.name then
+            local slots = inventory:Search('slots', currentArmour.name)
+            if not slots or not slots[1] then
+                currentArmour.name = nil
+                currentArmour.slot = nil
+                currentArmour.metadata = nil
                 SetPedArmour(cache.ped, 0)
-                armourMonitorRunning = false
-                lib.notify({ type = 'error', description = T('armour_removed') })
-                break
+                prevArmour = 0
             end
-        end
-
-        if currentArmour < prevArmour then
-            local damageAmount = prevArmour - currentArmour
-
-            if Config.ArmourBleedThrough > 0 then
-                local healthDamage = math.ceil(damageAmount * Config.ArmourBleedThrough)
-                if healthDamage > 0 then
-                    SetEntityHealth(cache.ped, GetEntityHealth(cache.ped) - healthDamage)
-                end
-            end
-
-            local armorPerPlate = Config.ArmorPerPlate or 20
-            local expectedPlates = math.ceil(currentArmour / armorPerPlate)
-
-            if storedPlates > expectedPlates then
-                local diff = expectedPlates - storedPlates
-                updateRig(diff, 0)
-            else
-                sendRigMetadataIfChanged(currentArmour)
-            end
-
-            prevArmour = currentArmour
-
-        elseif currentArmour > prevArmour then
-            prevArmour = currentArmour
-            sendRigMetadataIfChanged(currentArmour)
-        end
-
-        if currentArmour <= 0 then
-            if storedPlates > 0 then
-                updateRig(-storedPlates, 0)
-            else
-                sendRigMetadataIfChanged(0)
-            end
-            armourMonitorRunning = false
-            break
         end
     end
+end)
+
+-- ============================================================
+-- SERVER SYNC
+-- ============================================================
+local function BodyArmour_UpdateMetadata()
+    if not currentArmour or not currentArmour.metadata then return end
+
+    local meta = currentArmour.metadata
+    local itemName = currentArmour.name
+
+    meta.description = buildArmourDescription(meta, itemName)
+
+    TriggerServerEvent(
+        'armour:updateBodyArmourMetadata',
+        currentArmour.slot,
+        meta.plates,
+        meta.refills or 0
+    )
 end
 
-local function startArmourMonitoringIfNeeded()
-    if GetPedArmour(cache.ped) > 0 and activeRigSlot and not armourMonitorRunning then
-        armourMonitorRunning = true
-        CreateThread(DamageLoop)
-    end
-end
-
-local function loadAndEquipRig()
-    -- One forced scan on spawn/rig acquire
-    local rigItem = findArmourRig()
-    syncLocalStateFromRigItem(rigItem)
-
-    if not rigItem or not rigItem.metadata then
+-- ============================================================
+-- APPLY ARMOUR PLATE
+-- ============================================================
+function armour_plate(item, metadata, slot)
+    if not EnsureCurrentArmour() then
+        lib.notify({ type = 'error', description = L('body_armour_required') })
         return
     end
 
-    local saved = rigItem.metadata.savedArmour or 0
-    SetPedArmour(cache.ped, saved)
-    prevArmour = saved
+    local cfg = getArmourConfig(currentArmour.name)
+    if not cfg then
+        lib.notify({ type = 'error', description = L('body_armour_required') })
+        return
+    end
 
-    startArmourMonitoringIfNeeded()
-end
+    local meta = currentArmour.metadata
+    local plates = ensurePlateArray(meta)
 
--- -------------------------------------------------------------------------- --
---                                   EVENTS                                   --
--- -------------------------------------------------------------------------- --
+    if #plates >= (cfg.maxPlates or 5) then
+        lib.notify({ type = 'error', description = L('body_armour_full') })
+        return
+    end
 
-RegisterNetEvent('armour:rigAcquired', function()
-    loadAndEquipRig()
-end)
+    local plateDurability = Config.ArmourPlates[item.name]
+    if not plateDurability or plateDurability <= 0 then
+        lib.notify({ type = 'error', description = L('armour_plate_validation') })
+        return
+    end
 
-RegisterNetEvent('armour:serverForceStrip', function()
-    SetPedArmour(cache.ped, 0)
-    armourMonitorRunning = false
-    storedPlates = 0
-    storedRefills = 0
-    activeRigSlot = nil
-    activeRigMeta = nil
-end)
+    local currentArmourValue = calculateTotalArmour(meta)
+    if currentArmourValue >= 100 then
+        lib.notify({ type = 'error', description = L('body_armour_full') })
+        return
+    end
 
-RegisterNetEvent('armour:forceStripArmour', function()
-    if hasCompatibleRig() then return end
-    SetPedArmour(cache.ped, 0)
-    armourMonitorRunning = false
-    storedPlates = 0
-    storedRefills = 0
-    activeRigSlot = nil
-    activeRigMeta = nil
-end)
-
-RegisterNetEvent('armour:nilRig', function()
-    Wait(500)
-    nilRig()
-end)
-
-RegisterNetEvent('armour:checkAndSendArmourLevel', function()
-    local currentArmour = GetPedArmour(cache.ped)
-    if currentArmour <= 0 then return end
+    local label = (metadata and metadata.label) or item.label or 'Armour Plate'
 
     local success = lib.progressCircle({
-        label = 'Pulling Armour Plate',
+        label = L('armour_plate_apply'),
+        duration = 3000,
+        position = 'bottom',
+        useWhileDead = false,
+        canCancel = true,
+        disable = { move = false, car = false, combat = true },
+        anim = { dict = "missmic4", clip = "michael_tux_fidget" },
+    })
+
+    if not success then return end
+
+    plates[#plates + 1] = {
+        durability = plateDurability,
+        label = label,
+        item = item.name,
+    }
+
+    -- increment refills
+    meta.refills = (meta.refills or 0) + 1
+
+    syncArmourToPed(meta)
+    BodyArmour_UpdateMetadata()
+
+    lib.notify({ type = 'success', description = L('armour_plate_applied') })
+
+    TriggerServerEvent('armour:server:completedPlateUse', slot or item.slot)
+end
+exports('armour_plate', armour_plate)
+
+-- ============================================================
+-- PULL ARMOUR PLATE (top of stack)
+-- ============================================================
+RegisterNetEvent('armour:checkAndSendArmourLevel', function()
+    if not EnsureCurrentArmour() then return end
+
+    local meta = currentArmour.metadata
+    local plates = ensurePlateArray(meta)
+
+    if #plates == 0 then
+        lib.notify({ type = 'error', description = L('body_armour_no_plates') })
+        return
+    end
+
+    local success = lib.progressCircle({
+        label = L('armour_plate_pull'),
         duration = 1500,
         position = 'bottom',
         useWhileDead = false,
@@ -297,82 +273,113 @@ RegisterNetEvent('armour:checkAndSendArmourLevel', function()
 
     if not success then return end
 
-    local amountToRemove = Config.ArmorPerPlate or 20
-    if currentArmour < amountToRemove then amountToRemove = currentArmour end
+    local topPlate, index = getTopPlate(meta)
+    if not topPlate then
+        lib.notify({ type = 'error', description = L('body_armour_no_plates') })
+        return
+    end
 
-    local newArmourLevel = currentArmour - amountToRemove
-    SetPedArmour(cache.ped, newArmourLevel)
-    prevArmour = newArmourLevel
+    table.remove(plates, index)
 
-    TriggerServerEvent('armour:returnArmourItem', amountToRemove, lastArmourPlate.label, lastArmourPlate.image)
-    lib.notify({ type = 'success', description = T('plate_unequip') })
+    local durability = topPlate.durability or 0
+    local label = topPlate.label or 'Armour Plate'
+    local itemName = topPlate.item or 'armour_plate'
 
-    updateRig(-1, 0)
+    syncArmourToPed(meta)
+    BodyArmour_UpdateMetadata()
 
-    if newArmourLevel <= 0 then
-        nilRig()
-        armourMonitorRunning = false
+    TriggerServerEvent('armour:returnArmourItem', durability, label, itemName)
+
+    lib.notify({ type = 'success', description = L('armour_plate_pulled') })
+
+    if #plates == 0 then
+        SetPedArmour(cache.ped, 0)
+        prevArmour = 0
+        meta.armour = 0
+        BodyArmour_UpdateMetadata()
     end
 end)
 
-AddEventHandler('playerSpawned', function()
-    CreateThread(loadAndEquipRig)
+-- ============================================================
+-- DAMAGE MONITOR (top plate takes damage, auto-skip broken)
+-- ============================================================
+CreateThread(function()
+    while true do
+        Wait(250)
+
+        if not currentArmour.name or not currentArmour.metadata then
+            goto continue
+        end
+
+        local ped = cache.ped
+        local current = GetPedArmour(ped)
+        local meta = currentArmour.metadata
+        local plates = ensurePlateArray(meta)
+
+        if #plates > 0 and current < prevArmour then
+            local damage = prevArmour - current
+
+            while damage > 0 and #plates > 0 do
+                local topPlate, index = getTopPlate(meta)
+                if not topPlate then break end
+
+                local plateDur = topPlate.durability or 0
+                if plateDur <= 0 then
+                    -- broken, auto-skip (do not consume further)
+                    break
+                end
+
+                if damage >= plateDur then
+                    damage = damage - plateDur
+                    topPlate.durability = 0
+                else
+                    topPlate.durability = plateDur - damage
+                    damage = 0
+                end
+            end
+
+            syncArmourToPed(meta)
+            BodyArmour_UpdateMetadata()
+        end
+
+        prevArmour = GetPedArmour(ped)
+
+        ::continue::
+    end
 end)
 
--- -------------------------------------------------------------------------- --
---                              ITEM USE LOGIC                                --
--- -------------------------------------------------------------------------- --
+-- ============================================================
+-- DEATH MECHANIC — convert all plates to broken
+-- ============================================================
+CreateThread(function()
+    while true do
+        Wait(500)
 
-local function AddArmour(metadata, slotNumber)
-    if not activeRigSlot then
-        rescanRigIfNeeded(true)
+        if not currentArmour.name or not currentArmour.metadata then
+            goto continue
+        end
+
+        local ped = cache.ped
+        local health = GetEntityHealth(ped)
+
+        if health <= 101 then
+            local meta = currentArmour.metadata
+            local plates = ensurePlateArray(meta)
+
+            if #plates > 0 then
+                TriggerServerEvent('armour:server:convertAllPlatesToBrokenOnDeath', plates)
+            end
+
+            meta.plates = {}
+            meta.armour = 0
+            meta.description = buildArmourDescription(meta, currentArmour.name)
+
+            SetPedArmour(ped, 0)
+            prevArmour = 0
+
+            BodyArmour_UpdateMetadata()
+        end
+
+        ::continue::
     end
-
-    if not activeRigSlot then
-        lib.notify({ type = 'error', description = T('plate_carrier_required') })
-        return
-    end
-
-    if storedPlates >= Config.PlateSlotLimit then
-        lib.notify({ type = 'error', description = T('plate_carrier_full') })
-        return
-    end
-
-    if storedRefills >= Config.RefillCapacity then
-        lib.notify({ type = 'error', description = T('plate_carrier_worn') })
-        return
-    end
-
-    if lib.progressCircle({
-        label = 'Applying Armour Plate',
-        duration = 3000,
-        position = 'bottom',
-        useWhileDead = false,
-        canCancel = true,
-        disable = { move = false, car = false, combat = true },
-        anim = { dict = "missmic4", clip = "michael_tux_fidget" },
-    }) then
-        local plateValue = metadata.durability or Config.ArmorPerPlate or 20
-
-        lastArmourPlate.label = metadata.label
-        lastArmourPlate.image = metadata.image
-
-        local currentArmour = GetPedArmour(cache.ped)
-        local newArmour = math.min(currentArmour + plateValue, 100)
-
-        SetPedArmour(cache.ped, newArmour)
-        prevArmour = newArmour
-
-        lib.notify({ type = 'success', description = T('plate_applied') })
-
-        updateRig(1, 1)
-        TriggerServerEvent('armour:server:completedPlateUse', slotNumber)
-
-        startArmourMonitoringIfNeeded()
-    end
-end
-
-exports('armour_plate', function(_, slot)
-    if not slot or not slot.metadata then return end
-    AddArmour(slot.metadata, slot.slot)
 end)
