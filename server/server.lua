@@ -77,7 +77,6 @@ local function OnBodyArmourMoved(payload)
     local ok, err = pcall(function()
         local src = payload.source
 
-        -- MOVING / REMOVING / DROPPING OUT OF PLAYER INVENTORY
         if payload.fromInventory == src and payload.toInventory ~= src then
             local itemData = inventory:GetSlot(src, payload.fromSlot)
             if not itemData or not Config.BodyArmours[itemData.name] then return end
@@ -92,7 +91,6 @@ local function OnBodyArmourMoved(payload)
             TriggerClientEvent('armour:clientForceStrip', src)
         end
 
-        -- MOVING INTO PLAYER INVENTORY
         if payload.toInventory == src then
             SetTimeout(200, function()
                 TriggerClientEvent('armour:clientBodyArmourAcquired', src)
@@ -107,7 +105,6 @@ local function OnBodyArmourMoved(payload)
     return true
 end
 
--- swap between inventories
 exports.ox_inventory:registerHook('swapItems', OnBodyArmourMoved, {
     itemFilter = {
         ['body_armour'] = true,
@@ -117,7 +114,6 @@ exports.ox_inventory:registerHook('swapItems', OnBodyArmourMoved, {
     }
 })
 
--- remove from inventory (drop, delete, use)
 exports.ox_inventory:registerHook('removeItem', OnBodyArmourMoved, {
     itemFilter = {
         ['body_armour'] = true,
@@ -127,7 +123,6 @@ exports.ox_inventory:registerHook('removeItem', OnBodyArmourMoved, {
     }
 })
 
--- explicit drop hook
 exports.ox_inventory:registerHook('dropItem', OnBodyArmourMoved, {
     itemFilter = {
         ['body_armour'] = true,
@@ -158,23 +153,31 @@ end)
 -- ============================================================
 -- RETURN PLATE WHEN PULLED
 -- ============================================================
-RegisterNetEvent('armour:returnArmourItem', function(durability, label, itemName)
+RegisterNetEvent('armour:returnArmourItem', function(durability, originalItemName)
     local src = source
     durability = tonumber(durability) or 0
+    originalItemName = originalItemName
 
-    local giveItem = itemName
-    if durability <= 0 then
+    local items = exports.ox_inventory:Items()
+    local baseLabel = (items[originalItemName] and items[originalItemName].label)
+
+    local giveItem = originalItemName
+    local meta = {
+        durability = durability
+    }
+
+    if durability > 0 then
+    else
         giveItem = 'broken_armour_plate'
+        meta.label = 'Broken ' .. baseLabel
+        meta.description = 'A Broken ' .. baseLabel .. '.'
     end
 
-    inventory:AddItem(src, giveItem, 1, {
-        durability = durability,
-        label = label or 'Armour Plate'
-    })
+    inventory:AddItem(src, giveItem, 1, meta)
 end)
 
 -- ============================================================
--- UPDATE BODY ARMOUR METADATA (NO WORN CHECK HERE ANYMORE)
+-- UPDATE BODY ARMOUR METADATA
 -- ============================================================
 RegisterNetEvent('armour:updateBodyArmourMetadata', function(slot, plates, refills)
     local src = source
@@ -187,7 +190,6 @@ RegisterNetEvent('armour:updateBodyArmourMetadata', function(slot, plates, refil
     meta.plates = plates or meta.plates or {}
     meta.refills = refills or meta.refills or 0
 
-    -- recalc armour
     local total = 0
     for _, plate in ipairs(meta.plates) do
         if plate.durability and plate.durability > 0 then
@@ -219,19 +221,4 @@ RegisterNetEvent('armour:nilBodyArmourMetadata', function(slot)
     meta.description = FormatBodyArmourDescription(meta, item.name)
 
     inventory:SetMetadata(src, slot, meta)
-end)
-
--- ============================================================
--- DEATH: CONVERT ALL PLATES TO BROKEN
--- ============================================================
-RegisterNetEvent('armour:server:convertAllPlatesToBrokenOnDeath', function(plates)
-    local src = source
-    if not plates or type(plates) ~= "table" then return end
-
-    for _, plate in ipairs(plates) do
-        inventory:AddItem(src, 'broken_armour_plate', 1, {
-            durability = 0,
-            label = plate.label or 'Broken Armour Plate'
-        })
-    end
 end)

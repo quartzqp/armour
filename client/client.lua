@@ -17,8 +17,6 @@ local currentArmour = {
     metadata = nil,
 }
 
-local prevArmour = 0
-
 -- ============================================================
 -- HELPERS
 -- ============================================================
@@ -77,7 +75,6 @@ end
 local function syncArmourToPed(meta)
     local armour = calculateTotalArmour(meta)
     SetPedArmour(cache.ped, armour)
-    prevArmour = armour
     meta.armour = armour
 end
 
@@ -127,7 +124,6 @@ RegisterNetEvent('armour:clientForceStrip', function()
     currentArmour.slot = nil
     currentArmour.metadata = nil
     SetPedArmour(cache.ped, 0)
-    prevArmour = 0
 
     lib.notify({ type = 'info', description = L('body_armour_removed') })
 end)
@@ -143,7 +139,7 @@ RegisterNetEvent('armour:clientBodyArmourAcquired', function()
     end
 end)
 
--- Watchdog: if the armour item disappears, clear state
+-- Watchdog: if the armour item disappears, clear state + notify
 CreateThread(function()
     while true do
         Wait(1000)
@@ -155,7 +151,8 @@ CreateThread(function()
                 currentArmour.slot = nil
                 currentArmour.metadata = nil
                 SetPedArmour(cache.ped, 0)
-                prevArmour = 0
+
+                lib.notify({ type = 'info', description = L('body_armour_removed') })
             end
         end
     end
@@ -183,7 +180,18 @@ end
 -- ============================================================
 -- APPLY ARMOUR PLATE
 -- ============================================================
-function armour_plate(item, metadata, slot)
+exports('armour_plate', function(data, slot)
+    if not slot or type(slot) ~= 'table' then return end
+
+    local itemName = slot.name
+    if not itemName or not Config.ArmourPlates[itemName] then
+        lib.notify({ type = 'error', description = L('armour_plate_validation') })
+        return
+    end
+
+    local metadata = slot.metadata or {}
+    local slotId = slot.slot
+
     if not EnsureCurrentArmour() then
         lib.notify({ type = 'error', description = L('body_armour_required') })
         return
@@ -203,7 +211,8 @@ function armour_plate(item, metadata, slot)
         return
     end
 
-    local plateDurability = Config.ArmourPlates[item.name]
+    local plateDurability = metadata.durability or Config.ArmourPlates[itemName]
+
     if not plateDurability or plateDurability <= 0 then
         lib.notify({ type = 'error', description = L('armour_plate_validation') })
         return
@@ -215,8 +224,6 @@ function armour_plate(item, metadata, slot)
         return
     end
 
-    local label = (metadata and metadata.label) or item.label or 'Armour Plate'
-
     local success = lib.progressCircle({
         label = L('armour_plate_apply'),
         duration = 3000,
@@ -227,15 +234,16 @@ function armour_plate(item, metadata, slot)
         anim = { dict = "missmic4", clip = "michael_tux_fidget" },
     })
 
-    if not success then return end
+    if not success then
+        lib.notify({ type = 'info', description = L('armour_plate_cancelled') })
+        return
+    end
 
     plates[#plates + 1] = {
         durability = plateDurability,
-        label = label,
-        item = item.name,
+        item = itemName,
     }
 
-    -- increment refills
     meta.refills = (meta.refills or 0) + 1
 
     syncArmourToPed(meta)
@@ -243,9 +251,8 @@ function armour_plate(item, metadata, slot)
 
     lib.notify({ type = 'success', description = L('armour_plate_applied') })
 
-    TriggerServerEvent('armour:server:completedPlateUse', slot or item.slot)
-end
-exports('armour_plate', armour_plate)
+    TriggerServerEvent('armour:server:completedPlateUse', slotId)
+end)
 
 -- ============================================================
 -- PULL ARMOUR PLATE (top of stack)
@@ -273,6 +280,37 @@ RegisterNetEvent('armour:checkAndSendArmourLevel', function()
 
     if not success then return end
 
+    -- FORCE RECONCILE ANY LOST ARMOUR (including during progress bar)
+    local ped = cache.ped
+    local current = GetPedArmour(ped)
+    local calculated = calculateTotalArmour(meta)
+
+    if current < calculated then
+        local damage = calculated - current
+
+        while damage > 0 and #plates > 0 do
+            local topPlate, index = getTopPlate(meta)
+            if not topPlate then break end
+
+            local plateDur = topPlate.durability or 0
+            if plateDur <= 0 then
+                break
+            end
+
+            if damage >= plateDur then
+                damage = damage - plateDur
+                topPlate.durability = 0
+            else
+                topPlate.durability = plateDur - damage
+                damage = 0
+            end
+        end
+
+        syncArmourToPed(meta)
+        BodyArmour_UpdateMetadata()
+    end
+
+    -- NOW PULL THE TOP PLATE (guaranteed correct durability)
     local topPlate, index = getTopPlate(meta)
     if not topPlate then
         lib.notify({ type = 'error', description = L('body_armour_no_plates') })
@@ -282,26 +320,24 @@ RegisterNetEvent('armour:checkAndSendArmourLevel', function()
     table.remove(plates, index)
 
     local durability = topPlate.durability or 0
-    local label = topPlate.label or 'Armour Plate'
-    local itemName = topPlate.item or 'armour_plate'
+    local originalItemName = topPlate.item
 
     syncArmourToPed(meta)
     BodyArmour_UpdateMetadata()
 
-    TriggerServerEvent('armour:returnArmourItem', durability, label, itemName)
+    TriggerServerEvent('armour:returnArmourItem', durability, originalItemName)
 
     lib.notify({ type = 'success', description = L('armour_plate_pulled') })
 
     if #plates == 0 then
         SetPedArmour(cache.ped, 0)
-        prevArmour = 0
         meta.armour = 0
         BodyArmour_UpdateMetadata()
     end
 end)
 
 -- ============================================================
--- DAMAGE MONITOR (top plate takes damage, auto-skip broken)
+-- DAMAGE MONITOR (reconcile any lost armour to top plate)
 -- ============================================================
 CreateThread(function()
     while true do
@@ -315,9 +351,10 @@ CreateThread(function()
         local current = GetPedArmour(ped)
         local meta = currentArmour.metadata
         local plates = ensurePlateArray(meta)
+        local calculated = calculateTotalArmour(meta)
 
-        if #plates > 0 and current < prevArmour then
-            local damage = prevArmour - current
+        if #plates > 0 and current < calculated then
+            local damage = calculated - current
 
             while damage > 0 and #plates > 0 do
                 local topPlate, index = getTopPlate(meta)
@@ -325,7 +362,6 @@ CreateThread(function()
 
                 local plateDur = topPlate.durability or 0
                 if plateDur <= 0 then
-                    -- broken, auto-skip (do not consume further)
                     break
                 end
 
@@ -341,8 +377,6 @@ CreateThread(function()
             syncArmourToPed(meta)
             BodyArmour_UpdateMetadata()
         end
-
-        prevArmour = GetPedArmour(ped)
 
         ::continue::
     end
@@ -367,19 +401,28 @@ CreateThread(function()
             local plates = ensurePlateArray(meta)
 
             if #plates > 0 then
-                TriggerServerEvent('armour:server:convertAllPlatesToBrokenOnDeath', plates)
+                -- Set all plates to broken (durability 0) but keep them in the vest
+                for _, plate in ipairs(plates) do
+                    plate.durability = 0
+                end
+
+                -- Update armour value to 0 and sync with ped
+                syncArmourToPed(meta)
+
+                -- Save the updated metadata (plates array stays intact, just all broken)
+                BodyArmour_UpdateMetadata()
+
+                -- Optional: notify the player
+                lib.notify({
+                    type = 'error',
+                    title = 'Armour Destroyed',
+                    description = 'All armour plates shattered on death.'
+                })
             end
 
-            meta.plates = {}
-            meta.armour = 0
-            meta.description = buildArmourDescription(meta, currentArmour.name)
-
+            -- Ensure ped armour is 0
             SetPedArmour(ped, 0)
-            prevArmour = 0
-
-            BodyArmour_UpdateMetadata()
         end
-
         ::continue::
     end
 end)
