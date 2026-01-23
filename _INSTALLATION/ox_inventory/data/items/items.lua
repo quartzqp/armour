@@ -17,7 +17,7 @@
             {
                 label = 'Pull Plate',
                 action = function(slot)
-                    TriggerEvent('armour:checkAndSendArmourLevel', slot)
+                    TriggerEvent('armour:pullPlate', slot)
                 end
             }
         }
@@ -38,7 +38,7 @@
             {
                 label = 'Pull Plate',
                 action = function(slot)
-                    TriggerEvent('armour:checkAndSendArmourLevel', slot)
+                    TriggerEvent('armour:pullPlate', slot)
                 end
             }
         }
@@ -59,7 +59,7 @@
             {
                 label = 'Pull Plate',
                 action = function(slot)
-                    TriggerEvent('armour:checkAndSendArmourLevel', slot)
+                    TriggerEvent('armour:pullPlate', slot)
                 end
             }
         }
@@ -80,7 +80,7 @@
             {
                 label = 'Pull Plate',
                 action = function(slot)
-                    TriggerEvent('armour:checkAndSendArmourLevel', slot)
+                    TriggerEvent('armour:pullPlate', slot)
                 end
             }
         }
@@ -126,4 +126,5 @@
         client = {
             image = "broken_armour_plate.png",
         }
+
     },
