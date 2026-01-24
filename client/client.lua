@@ -46,14 +46,12 @@ local function getTopPlate(meta)
     return plates[#plates], #plates
 end
 
+-- ============================================================
+-- FIXED: BROKEN PLATES COUNT TOWARD TOTAL
+-- ============================================================
 local function buildArmourDescription(meta, itemName)
     local plates = ensurePlateArray(meta)
-    local nonBroken = 0
-    for _, plate in ipairs(plates) do
-        if plate.durability and plate.durability > 0 then
-            nonBroken = nonBroken + 1
-        end
-    end
+    local plateCount = #plates   -- FIXED
 
     local cfg = getArmourConfig(itemName) or {}
     local maxPlates = cfg.maxPlates or 5
@@ -66,7 +64,7 @@ local function buildArmourDescription(meta, itemName)
         L('label_armour'),
         armour,
         L('label_plates'),
-        nonBroken, maxPlates,
+        plateCount, maxPlates,
         L('label_refills'),
         refills, maxRefills
     )
@@ -139,7 +137,6 @@ RegisterNetEvent('armour:clientBodyArmourAcquired', function()
     end
 end)
 
--- Watchdog: if the armour item disappears, clear state + notify
 CreateThread(function()
     while true do
         Wait(1000)
@@ -224,6 +221,13 @@ exports('armour_plate', function(data, slot)
         return
     end
 
+    local currentRefills = meta.refills or 0
+    local maxRefills = cfg.maxRefills or 0
+    if currentRefills >= maxRefills then
+        lib.notify({ type = 'error', description = L('body_armour_worn') })
+        return
+    end
+
     local success = lib.progressCircle({
         label = L('armour_plate_apply'),
         duration = 3000,
@@ -231,7 +235,7 @@ exports('armour_plate', function(data, slot)
         useWhileDead = false,
         canCancel = true,
         disable = { move = false, car = false, combat = true },
-        anim = { dict = "missmic4", clip = "michael_tux_fidget" },
+        anim = { dict = "anim@gear@armour_plate", clip = "armour_plate_clip" },
     })
 
     if not success then
@@ -244,7 +248,7 @@ exports('armour_plate', function(data, slot)
         item = itemName,
     }
 
-    meta.refills = (meta.refills or 0) + 1
+    meta.refills = currentRefills + 1
 
     syncArmourToPed(meta)
     BodyArmour_UpdateMetadata()
@@ -257,7 +261,7 @@ end)
 -- ============================================================
 -- PULL ARMOUR PLATE (top of stack)
 -- ============================================================
-RegisterNetEvent('armour:checkAndSendArmourLevel', function()
+RegisterNetEvent('armour:pullPlate', function()
     if not EnsureCurrentArmour() then return end
 
     local meta = currentArmour.metadata
@@ -280,7 +284,6 @@ RegisterNetEvent('armour:checkAndSendArmourLevel', function()
 
     if not success then return end
 
-    -- FORCE RECONCILE ANY LOST ARMOUR (including during progress bar)
     local ped = cache.ped
     local current = GetPedArmour(ped)
     local calculated = calculateTotalArmour(meta)
@@ -310,7 +313,6 @@ RegisterNetEvent('armour:checkAndSendArmourLevel', function()
         BodyArmour_UpdateMetadata()
     end
 
-    -- NOW PULL THE TOP PLATE (guaranteed correct durability)
     local topPlate, index = getTopPlate(meta)
     if not topPlate then
         lib.notify({ type = 'error', description = L('body_armour_no_plates') })
@@ -337,7 +339,7 @@ RegisterNetEvent('armour:checkAndSendArmourLevel', function()
 end)
 
 -- ============================================================
--- DAMAGE MONITOR (reconcile any lost armour to top plate)
+-- DAMAGE MONITOR
 -- ============================================================
 CreateThread(function()
     while true do
@@ -383,7 +385,7 @@ CreateThread(function()
 end)
 
 -- ============================================================
--- DEATH MECHANIC — convert all plates to broken
+-- DEATH MECHANIC
 -- ============================================================
 CreateThread(function()
     while true do
@@ -401,26 +403,19 @@ CreateThread(function()
             local plates = ensurePlateArray(meta)
 
             if #plates > 0 then
-                -- Set all plates to broken (durability 0) but keep them in the vest
                 for _, plate in ipairs(plates) do
                     plate.durability = 0
                 end
 
-                -- Update armour value to 0 and sync with ped
                 syncArmourToPed(meta)
-
-                -- Save the updated metadata (plates array stays intact, just all broken)
                 BodyArmour_UpdateMetadata()
 
-                -- Optional: notify the player
                 lib.notify({
                     type = 'error',
-                    title = 'Armour Destroyed',
-                    description = 'All armour plates shattered on death.'
+                    description = L('armour_plate_broken')
                 })
             end
 
-            -- Ensure ped armour is 0
             SetPedArmour(ped, 0)
         end
         ::continue::

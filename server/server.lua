@@ -9,18 +9,13 @@ local function L(key)
 end
 
 -- ============================================================
--- DESCRIPTION BUILDER
+-- DESCRIPTION BUILDER (FIXED: broken plates count)
 -- ============================================================
 local function FormatBodyArmourDescription(meta, itemName)
     local plates = meta.plates or {}
     local cfg = Config.BodyArmours[itemName] or {}
 
-    local nonBroken = 0
-    for _, plate in ipairs(plates) do
-        if plate.durability and plate.durability > 0 then
-            nonBroken = nonBroken + 1
-        end
-    end
+    local plateCount = #plates -- FIXED
 
     local maxPlates = cfg.maxPlates or 5
     local refills = meta.refills or 0
@@ -32,7 +27,7 @@ local function FormatBodyArmourDescription(meta, itemName)
         L('label_armour'),
         armour,
         L('label_plates'),
-        nonBroken, maxPlates,
+        plateCount, maxPlates,
         L('label_refills'),
         refills, maxRefills
     )
@@ -51,7 +46,7 @@ local function LimitPlateStacking(payload)
             if newTotal > 5 then
                 TriggerClientEvent('ox_lib:notify', payload.source, {
                     type = 'error',
-                    description = L('plate_carrier_full')
+                    description = 'You cannot stack more than 5 plates.'
                 })
                 return false
             end
@@ -77,6 +72,7 @@ local function OnBodyArmourMoved(payload)
     local ok, err = pcall(function()
         local src = payload.source
 
+        -- Moving armour out of player inventory
         if payload.fromInventory == src and payload.toInventory ~= src then
             local itemData = inventory:GetSlot(src, payload.fromSlot)
             if not itemData or not Config.BodyArmours[itemData.name] then return end
@@ -91,6 +87,7 @@ local function OnBodyArmourMoved(payload)
             TriggerClientEvent('armour:clientForceStrip', src)
         end
 
+        -- Moving armour into player inventory
         if payload.toInventory == src then
             SetTimeout(200, function()
                 TriggerClientEvent('armour:clientBodyArmourAcquired', src)
@@ -145,7 +142,7 @@ RegisterNetEvent('armour:server:completedPlateUse', function(slot)
     else
         TriggerClientEvent('ox_lib:notify', src, {
             type = 'error',
-            description = L('plate_validation')
+            description = L('armour_plate_validation')
         })
     end
 end)
@@ -159,15 +156,14 @@ RegisterNetEvent('armour:returnArmourItem', function(durability, originalItemNam
     originalItemName = originalItemName
 
     local items = exports.ox_inventory:Items()
-    local baseLabel = (items[originalItemName] and items[originalItemName].label)
+    local baseLabel = (items[originalItemName] and items[originalItemName].label) or 'Armour Plate'
 
     local giveItem = originalItemName
     local meta = {
         durability = durability
     }
 
-    if durability > 0 then
-    else
+    if durability <= 0 then
         giveItem = 'broken_armour_plate'
         meta.label = 'Broken ' .. baseLabel
         meta.description = 'A Broken ' .. baseLabel .. '.'

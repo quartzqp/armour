@@ -15,7 +15,7 @@ Config.BodyArmours = {
         maxRefills = 30,
     },
 
-    improved_body_armour = {
+    improved_body_armour = { -- Faction Body Armour
         maxPlates = 10,
         maxRefills = 60,
     },
@@ -29,7 +29,7 @@ Config.BodyArmours = {
 
 Config.ArmourPlates = {
     armour_plate = 20,
-    improved_armour_plate = 25,
+    improved_armour_plate = 40, -- Faction Armour Plate
     broken_armour_plate = 0,
 }
 
@@ -40,17 +40,18 @@ Config.Locales = {
         ['label_refills']           = 'Refills',
 
         ['body_armour_applied']     = 'Body Armour Equipped.',
-        ['body_armour_removed']     = 'Body Armour Removed.',
+        ['body_armour_removed']     = 'Body Armour Un-Removed.',
         ['body_armour_required']    = 'You Must Have a Body Armour.',
         ['body_armour_full']        = 'This Body Armour is Full.',
         ['body_armour_worn']        = 'This Body Armour is Worn.',
-        ['body_armour_no_plates']   = 'No Plates Available in this Armour.',
+        ['body_armour_no_plates']   = 'No Armour Plate to Pull.',
 
         ['armour_plate_applied']    = 'Armour Plate Applied.',
         ['armour_plate_pulled']     = 'Armour Plate Pulled.',
         ['armour_plate_apply']      = 'Applying Armour Plate',
         ['armour_plate_pull']       = 'Pulling Armour Plate',
         ['armour_plate_cancelled']  = 'Armour Plate Cancelled',
+        ['armour_plate_broken']     = 'Armour Plates Broken.',
         ['armour_plate_validation'] = 'ERROR: Armour Plate Validation Failed.',
     }
 }

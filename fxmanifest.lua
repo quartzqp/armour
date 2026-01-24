@@ -1,10 +1,11 @@
 fx_version 'cerulean'
+use_experimental_fxv2_oal 'yes'
+lua54 'yes'
 game 'gta5'
-
 name 'armour'
 author 'quartzqp'
-description 'Stack-based armour and plate system'
 version '1.0.0'
+description 'Stack-based armour and plate system'
 
 shared_scripts {
     '@ox_lib/init.lua',
