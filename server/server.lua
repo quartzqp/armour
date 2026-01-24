@@ -15,7 +15,7 @@ local function FormatBodyArmourDescription(meta, itemName)
     local plates = meta.plates or {}
     local cfg = Config.BodyArmours[itemName] or {}
 
-    local plateCount = #plates -- FIXED
+    local plateCount = #plates
 
     local maxPlates = cfg.maxPlates or 5
     local refills = meta.refills or 0
@@ -46,7 +46,7 @@ local function LimitPlateStacking(payload)
             if newTotal > 5 then
                 TriggerClientEvent('ox_lib:notify', payload.source, {
                     type = 'error',
-                    description = 'You cannot stack more than 5 plates.'
+                    description = L('body_armour_full')
                 })
                 return false
             end
@@ -72,7 +72,6 @@ local function OnBodyArmourMoved(payload)
     local ok, err = pcall(function()
         local src = payload.source
 
-        -- Moving armour out of player inventory
         if payload.fromInventory == src and payload.toInventory ~= src then
             local itemData = inventory:GetSlot(src, payload.fromSlot)
             if not itemData or not Config.BodyArmours[itemData.name] then return end
@@ -87,7 +86,6 @@ local function OnBodyArmourMoved(payload)
             TriggerClientEvent('armour:clientForceStrip', src)
         end
 
-        -- Moving armour into player inventory
         if payload.toInventory == src then
             SetTimeout(200, function()
                 TriggerClientEvent('armour:clientBodyArmourAcquired', src)
@@ -218,3 +216,4 @@ RegisterNetEvent('armour:nilBodyArmourMetadata', function(slot)
 
     inventory:SetMetadata(src, slot, meta)
 end)
+
